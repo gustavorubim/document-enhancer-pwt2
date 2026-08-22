@@ -6,6 +6,7 @@ build-backend = "hatchling.build"
 name = "document-enhancer-mvp"
 version = "0.1.0"
 description = "Lean, source-grounded desktop-procedure document enhancer"
+readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
   "langchain>=0.3.27,<2",
