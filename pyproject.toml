@@ -1,0 +1,46 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "document-enhancer-mvp"
+version = "0.1.0"
+description = "Lean, source-grounded desktop-procedure document enhancer"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "langchain>=0.3.27,<2",
+  "langchain-google-genai>=2.1.9,<4",
+  "markdown-it-py>=3.0,<5",
+  "pillow>=11.3,<13",
+  "pydantic>=2.11,<3",
+  "python-docx>=1.2,<2",
+  "typer>=0.16,<1",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.4,<10",
+  "ruff>=0.12,<1",
+]
+
+[project.scripts]
+docenhance = "document_enhancer.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/document_enhancer"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+
+[tool.uv]
+# macOS can mark files inside a hidden .venv as UF_HIDDEN; Python 3.12 then skips a stale
+# editable .pth file. Reinstalling this tiny local package keeps plain `uv run ...` reliable.
+reinstall-package = ["document-enhancer-mvp"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
