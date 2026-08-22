@@ -1,0 +1,391 @@
+{
+  "fixture": {
+    "title": "Weekly Purchase-Order Invoice Variance Review",
+    "source_file": "messy_desktop_procedure.docx",
+    "source_format": "docx",
+    "builder": "build_messy_fixture.py",
+    "expected_source_block_count": 9,
+    "expected_source_block_headings": [
+      "Weekly Purchase-Order Invoice Variance Review",
+      "Purpose, audience, and scope",
+      "Prerequisites, access, and inputs",
+      "Roles, trigger, and timing",
+      "Desktop procedure — perform in order",
+      "Decision point and validation",
+      "Evidence and expected outputs",
+      "Desk note copied from the older checklist",
+      "Exceptions, recovery, and escalation"
+    ]
+  },
+  "title": "Weekly Purchase-Order Invoice Variance Review",
+  "facts": [
+    "The weekly review identifies unmatched or over-threshold purchase-order invoice variances before Accounts Payable posts the payment batch.",
+    "Successful completion produces a reviewed workbook, exception cases for unresolved rows, and a retained audit package.",
+    "The intended audience is Accounts Payable analysts who process North America purchase-order invoices in LedgerHub.",
+    "The procedure includes the current week's PO-backed invoice export, supplier-roster comparison, variance classification, exception cases, reviewer validation, and evidence handoff.",
+    "The procedure excludes non-PO invoices, credit memos, and historical weeks unless a Finance Reviewer reopens them.",
+    "Required access includes LedgerHub, the Procurement shared mailbox, the Finance shared drive, and Exception Queue.",
+    "Required tools include Excel desktop and Teams, and access uses SSO and MFA.",
+    "Required inputs include PO_Variance_YYYYMMDD.csv, approved_supplier_roster.xlsx, invoice PDFs in LedgerHub, and the review_log.csv template.",
+    "The trigger is every Tuesday after the Procurement analyst publishes the current export, with a revised-export rerun before the deadline.",
+    "The standard path must be completed and handed off before 16:00 ET the same day.",
+    "Variance is calculated as variance_amount = invoice_amount - po_amount.",
+    "The source export must remain unchanged; the working file is PO_Variance_YYYYMMDD_reviewed.xlsx.",
+    "Reason codes are AMOUNT, MISSING_PO, and DUPLICATE, and unmatched suppliers receive MISSING_SUPPLIER.",
+    "Pending rows receive an Exception Queue case ID and are assigned to the Finance Reviewer when the queue is available.",
+    "Validation compares row count with the original export, total variance with the LedgerHub summary, status values with Clear or Pending, case IDs, and reviewer initials/timestamp.",
+    "Evidence includes the reviewed workbook, review_log.csv, case export, invoice PDFs, variance_summary_YYYYMMDD.png, and the weekly Evidence-folder link."
+  ],
+  "purpose": {
+    "statement": "The weekly review identifies unmatched or over-threshold purchase-order invoice variances before Accounts Payable posts the payment batch.",
+    "successful_outcome": "A reviewed workbook, exception cases for unresolved rows, and a retained audit package are produced.",
+    "source_heading": "Purpose, audience, and scope"
+  },
+  "audience_scope": {
+    "audience": "Accounts Payable analysts who process North America purchase-order invoices in LedgerHub.",
+    "included": [
+      "current week's PO-backed invoice export",
+      "supplier-roster comparison",
+      "variance classification",
+      "exception cases",
+      "reviewer validation",
+      "evidence handoff"
+    ],
+    "excluded": [
+      "non-PO invoices",
+      "credit memos",
+      "historical weeks unless a Finance Reviewer reopens them"
+    ]
+  },
+  "prerequisites": {
+    "access": [
+      "LedgerHub",
+      "Procurement shared mailbox",
+      "Finance shared drive",
+      "Exception Queue"
+    ],
+    "tools": [
+      "Excel desktop",
+      "Teams",
+      "SSO",
+      "MFA"
+    ],
+    "files": [
+      "PO_Variance_YYYYMMDD.csv",
+      "approved_supplier_roster.xlsx",
+      "review_log.csv",
+      "invoice PDF in LedgerHub"
+    ],
+    "readiness_checks": [
+      "The export has arrived.",
+      "The weekly folder is writable.",
+      "LedgerHub is available.",
+      "The LedgerHub period is not locked.",
+      "The untouched source copy is in Finance\\AP\\Variance\\YYYY-WW\\Incoming."
+    ]
+  },
+  "roles": [
+    {
+      "role": "Accounts Payable analyst",
+      "responsibility": "Downloads, compares, classifies, and packages the review.",
+      "handoff": "Sends the evidence link to the Finance Reviewer."
+    },
+    {
+      "role": "Procurement analyst",
+      "responsibility": "Publishes the PO_Variance_YYYYMMDD.csv export and corrects a missing export.",
+      "handoff": "Confirms a replacement export in the shared mailbox."
+    },
+    {
+      "role": "Finance Reviewer",
+      "responsibility": "Checks classifications, case IDs, and validation evidence.",
+      "handoff": "Provides reviewer initials and timestamp in review_log.csv."
+    }
+  ],
+  "triggers_timing": {
+    "trigger": "Every Tuesday after the Procurement analyst publishes the current export.",
+    "rerun_condition": "Repeat the review if a revised export arrives before the deadline.",
+    "deadline": "Before 16:00 ET the same day.",
+    "minimum_trigger_time": "09:00 ET"
+  },
+  "steps": [
+    {
+      "number": 1,
+      "source_heading": "Desktop procedure — perform in order",
+      "must_contain": [
+        "download the latest PO_Variance_YYYYMMDD.csv export",
+        "after 09:00 ET",
+        "Finance\\AP\\Variance\\YYYY-WW\\Incoming"
+      ],
+      "expected_result": "The untouched source export is copied into the weekly Incoming folder."
+    },
+    {
+      "number": 2,
+      "source_heading": "Desktop procedure — perform in order",
+      "must_contain": [
+        "Open LedgerHub with SSO and MFA",
+        "Accounts Payable > Invoice Match",
+        "business unit to North America",
+        "period is not locked"
+      ],
+      "expected_result": "The analyst is in the correct North America YYYY-WW Invoice Match view."
+    },
+    {
+      "number": 3,
+      "source_heading": "Desktop procedure — perform in order",
+      "must_contain": [
+        "approved_supplier_roster.xlsx",
+        "Compare each Supplier ID",
+        "MISSING_SUPPLIER"
+      ],
+      "expected_result": "Unmatched suppliers are marked rather than added to the roster."
+    },
+    {
+      "number": 4,
+      "source_heading": "Desktop procedure — perform in order",
+      "must_contain": [
+        "variance_amount = invoice_amount - po_amount",
+        "PO_Variance_YYYYMMDD_reviewed.xlsx",
+        "do not overwrite the original CSV"
+      ],
+      "expected_result": "A working workbook contains the calculated variance without changing the original export."
+    },
+    {
+      "number": 5,
+      "source_heading": "Desktop procedure — perform in order",
+      "must_contain": [
+        "non-zero variance_amount",
+        "MISSING_PO",
+        "DUPLICATE",
+        "related invoice PDF"
+      ],
+      "expected_result": "Exception candidates are filtered, reason-coded, and supported with invoice evidence."
+    },
+    {
+      "number": 6,
+      "source_heading": "Desktop procedure — perform in order",
+      "must_contain": [
+        "LedgerHub decision panel",
+        "at or below $25",
+        "above it goes to Pending review",
+        "$30 value in the old desk note"
+      ],
+      "expected_result": "The threshold conflict is visible and is not silently resolved by the analyst."
+    },
+    {
+      "number": 7,
+      "source_heading": "Desktop procedure — perform in order",
+      "must_contain": [
+        "create an exception case in Exception Queue",
+        "copy its case ID",
+        "assign the case to the Finance Reviewer"
+      ],
+      "expected_result": "Every Pending row has a case ID when the queue is available; otherwise it remains Pending."
+    },
+    {
+      "number": 8,
+      "source_heading": "Desktop procedure — perform in order",
+      "must_contain": [
+        "Finance Reviewer",
+        "reason code, invoice PDF, and case ID",
+        "reviewer initials and the review timestamp",
+        "review_log.csv"
+      ],
+      "expected_result": "The reviewer check is recorded and unresolved rows remain Pending."
+    },
+    {
+      "number": 9,
+      "source_heading": "Desktop procedure — perform in order",
+      "must_contain": [
+        "PO_Variance_YYYYMMDD_reviewed.xlsx",
+        "case export",
+        "variance_summary_YYYYMMDD.png",
+        "before 16:00 ET"
+      ],
+      "expected_result": "The evidence package is saved in the weekly Evidence folder and handed off."
+    }
+  ],
+  "decision_points": [
+    {
+      "condition": "Absolute total variance <= $25 and no other exception",
+      "action": "Select Clear.",
+      "expected_result": "Status is Clear and the row is included in review_log.csv."
+    },
+    {
+      "condition": "Absolute total variance > $25, missing PO, duplicate invoice, or unmatched supplier",
+      "action": "Keep Pending, create an Exception Queue case, and assign Finance Reviewer.",
+      "expected_result": "Case ID appears in the working file."
+    }
+  ],
+  "validation_checks": [
+    "Reviewed row count matches the original export.",
+    "The sum of variance_amount equals the LedgerHub summary.",
+    "Every status is Clear or Pending.",
+    "No required case ID is blank.",
+    "review_log.csv contains reviewer initials and a timestamp."
+  ],
+  "outputs_evidence": [
+    {
+      "artifact": "PO_Variance_YYYYMMDD_reviewed.xlsx",
+      "purpose": "Reviewed workbook with reason codes and Clear/Pending statuses.",
+      "location": "Finance\\AP\\Variance\\YYYY-WW\\Evidence"
+    },
+    {
+      "artifact": "Exception Queue case export",
+      "purpose": "One case ID for every Pending row created successfully.",
+      "location": "Finance\\AP\\Variance\\YYYY-WW\\Evidence"
+    },
+    {
+      "artifact": "review_log.csv",
+      "purpose": "Reviewer initials, review timestamp, and outage or conflict notes.",
+      "location": "Finance\\AP\\Variance\\YYYY-WW\\Evidence"
+    },
+    {
+      "artifact": "variance_summary_YYYYMMDD.png",
+      "purpose": "Screenshot of the variance summary.",
+      "location": "Finance\\AP\\Variance\\YYYY-WW\\Evidence"
+    },
+    {
+      "artifact": "Teams evidence-folder link",
+      "purpose": "Handoff to the Finance Reviewer.",
+      "location": "Finance\\AP\\Variance\\YYYY-WW\\Evidence"
+    }
+  ],
+  "warnings_notes": [
+    {
+      "kind": "warning",
+      "text": "Never edit the original CSV or overwrite a locked-period record. Work only in a copy and retain the untouched source."
+    },
+    {
+      "kind": "note",
+      "text": "Keep negative variance signs in the workbook; a negative amount indicates the invoice is below the purchase order."
+    }
+  ],
+  "exceptions_recovery_escalation": {
+    "exceptions": [
+      {
+        "condition": "The Procurement export is missing.",
+        "action": "Check the mailbox filter, refresh once, look for a revised attachment, save missing_export_YYYYMMDD.png, and notify the Procurement analyst in Teams."
+      },
+      {
+        "condition": "LedgerHub or Exception Queue is unavailable.",
+        "action": "Wait 15 minutes and retry; do not change statuses offline."
+      },
+      {
+        "condition": "A validation check fails.",
+        "action": "Keep the affected row Pending, preserve the source row and invoice PDF, and create an Exception Queue case if available."
+      }
+    ],
+    "recovery": [
+      "Record the outage in review_log.csv.",
+      "Resume from the last saved workbook when access returns.",
+      "Keep the source unchanged and save the latest working copy.",
+      "Record the outage or threshold conflict before continuing or escalating."
+    ],
+    "escalation": [
+      "If the service is not back by 14:00 ET, escalate to the finance owner referenced in the procedure.",
+      "For a row between $25 and $30, leave it Pending and ask the Finance Reviewer to route the question to the unnamed finance owner."
+    ]
+  },
+  "missing_facts": [
+    {
+      "id": "GAP-001",
+      "kind": "missing",
+      "description": "The procedure repeatedly refers to a finance owner for threshold conflicts and system/export outages but does not identify the accountable person's name, team queue, or contact method.",
+      "question": "Who is the accountable finance owner or queue for resolving threshold conflicts and LedgerHub/Exception Queue outages?",
+      "source_headings": [
+        "Roles, trigger, and timing",
+        "Desk note copied from the older checklist",
+        "Exceptions, recovery, and escalation"
+      ],
+      "deduplication_key": "accountable finance owner or queue"
+    }
+  ],
+  "conflicts": [
+    {
+      "id": "GAP-002",
+      "kind": "conflict",
+      "topic": "Clear threshold",
+      "values": [
+        "$25",
+        "$30"
+      ],
+      "description": "The current LedgerHub decision panel and decision table use an absolute total variance threshold of $25, while the copied old desk note uses $30; the conflict is repeated in the threshold escalation path.",
+      "question": "Should the Clear threshold be absolute total variance at or below $25 or at or below $30?",
+      "source_occurrences": [
+        {
+          "source_heading": "Desktop procedure — perform in order",
+          "text": "an absolute total variance at or below $25 is eligible for Clear"
+        },
+        {
+          "source_heading": "Decision point and validation",
+          "text": "Absolute total variance <= $25 and no other exception"
+        },
+        {
+          "source_heading": "Desk note copied from the older checklist",
+          "text": "Use an absolute total variance at or below $30 as Clear"
+        },
+        {
+          "source_heading": "Exceptions, recovery, and escalation",
+          "text": "For a row between $25 and $30, treat the threshold as unresolved"
+        }
+      ],
+      "deduplication_key": "clear threshold 25 versus 30",
+      "expected_unique_question_count": 1
+    }
+  ],
+  "expected_questions": [
+    {
+      "id": "QUE-001",
+      "gap_id": "GAP-001",
+      "kind": "missing",
+      "text": "Who is the accountable finance owner or queue for resolving threshold conflicts and LedgerHub/Exception Queue outages?"
+    },
+    {
+      "id": "QUE-002",
+      "gap_id": "GAP-002",
+      "kind": "conflict",
+      "text": "Should the Clear threshold be absolute total variance at or below $25 or at or below $30?"
+    }
+  ],
+  "counts": {
+    "minimum_ordered_steps": 7,
+    "ordered_step_count": 9,
+    "missing_fact_count": 1,
+    "conflict_count": 1,
+    "expected_question_count": 2,
+    "expected_unique_question_count_for_repeated_conflict": 1,
+    "required_warning_count": 1,
+    "required_note_count": 1
+  },
+  "required_strings": [
+    "Weekly Purchase-Order Invoice Variance Review",
+    "North America",
+    "LedgerHub",
+    "Procurement shared mailbox",
+    "Finance\\AP\\Variance\\YYYY-WW\\Incoming",
+    "PO_Variance_YYYYMMDD.csv",
+    "approved_supplier_roster.xlsx",
+    "SSO and MFA",
+    "Accounts Payable > Invoice Match",
+    "MISSING_SUPPLIER",
+    "variance_amount = invoice_amount - po_amount",
+    "PO_Variance_YYYYMMDD_reviewed.xlsx",
+    "AMOUNT",
+    "MISSING_PO",
+    "DUPLICATE",
+    "Exception Queue",
+    "Finance Reviewer",
+    "review_log.csv",
+    "variance_summary_YYYYMMDD.png",
+    "09:00 ET",
+    "16:00 ET",
+    "Absolute total variance <= $25",
+    "at or below $30 as Clear",
+    "WARNING —",
+    "NOTE —",
+    "Wait 15 minutes and retry",
+    "not named in this checklist",
+    "missing_export_YYYYMMDD.png",
+    "source row and invoice PDF"
+  ]
+}
