@@ -9,8 +9,8 @@ description = "Lean, source-grounded desktop-procedure document enhancer"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
-  "langchain>=0.3.27,<2",
   "langchain-google-genai>=2.1.9,<4",
+  "langgraph>=1.2,<2",
   "markdown-it-py>=3.0,<5",
   "pillow>=11.3,<13",
   "pydantic>=2.11,<3",

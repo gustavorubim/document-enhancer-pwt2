@@ -1,10 +1,11 @@
-"""One-command interface for the linear document-enhancement pipeline."""
+"""Command interface for the bounded LangGraph document-enhancement workflow."""
 
 from pathlib import Path
 from typing import Annotated
 
 import typer
 
+from document_enhancer.models import StructureMode
 from document_enhancer.pipeline import (
     DeterministicProvider,
     GeminiProvider,
@@ -30,6 +31,16 @@ def _select_provider(provider: str, model: str):
     return selected, model_provider
 
 
+def _structure_mode(value: str) -> StructureMode:
+    try:
+        return StructureMode(value.strip().casefold())
+    except ValueError as exc:
+        raise typer.BadParameter(
+            "structure mode must be one of: auto, always, never",
+            param_hint="structure-mode",
+        ) from exc
+
+
 @app.callback()
 def main() -> None:
     """Create source-grounded desktop procedures from DOCX or Markdown."""
@@ -46,6 +57,13 @@ def run_command(
     model: Annotated[str, typer.Option("--model", help="Gemini model name.")] = (
         "gemini-2.5-flash"
     ),
+    structure_mode: Annotated[
+        str,
+        typer.Option(
+            "--structure-mode",
+            help="auto, always, or never; auto recovers only weak document layouts.",
+        ),
+    ] = "auto",
 ) -> None:
     """Create draft, analysis, and mapping artifacts immediately."""
 
@@ -56,6 +74,7 @@ def run_command(
             template_path=template,
             output_dir=output_dir,
             provider=model_provider,
+            structure_mode=_structure_mode(structure_mode),
         )
     except (OSError, ValueError, PipelineContractError) as exc:
         typer.echo(f"Error: {exc}", err=True)
@@ -83,6 +102,13 @@ def stage1_command(
     model: Annotated[str, typer.Option("--model", help="Gemini model name.")] = (
         "gemini-2.5-flash"
     ),
+    structure_mode: Annotated[
+        str,
+        typer.Option(
+            "--structure-mode",
+            help="auto, always, or never; auto recovers only weak document layouts.",
+        ),
+    ] = "auto",
 ) -> None:
     """Create the draft, analysis, process flow, and editable questions file."""
 
@@ -94,6 +120,7 @@ def stage1_command(
             output_dir=output_dir,
             provider=model_provider,
             include_process_flow=True,
+            structure_mode=_structure_mode(structure_mode),
         )
     except (OSError, ValueError, PipelineContractError) as exc:
         typer.echo(f"Error: {exc}", err=True)
@@ -126,6 +153,13 @@ def stage2_command(
     model: Annotated[str, typer.Option("--model", help="Gemini model name.")] = (
         "gemini-2.5-flash"
     ),
+    structure_mode: Annotated[
+        str,
+        typer.Option(
+            "--structure-mode",
+            help="auto, always, or never; must match the Stage 1 recovery policy.",
+        ),
+    ] = "auto",
 ) -> None:
     """Use complete owner answers to create a revised final procedure."""
 
@@ -137,6 +171,7 @@ def stage2_command(
             answers_path=answers,
             output_dir=output_dir,
             provider=model_provider,
+            structure_mode=_structure_mode(structure_mode),
         )
     except (OSError, ValueError, PipelineContractError) as exc:
         typer.echo(f"Error: {exc}", err=True)

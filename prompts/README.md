@@ -3,6 +3,7 @@
 All substantive model instructions live in this directory and are loaded at runtime:
 
 - `shared.md` supplies grounding and detailed-writing rules to every model operation.
+- `structure.md` defines bounded recovery for poorly sectioned documents.
 - `analyze.md` defines complete-source analysis and mapping.
 - `draft_section.md` defines bounded per-section drafting.
 - `review.md` defines the final completeness and grounding review.

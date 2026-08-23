@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass
+from io import BytesIO
 from pathlib import Path
 
 from docx import Document
 from docx.document import Document as DocumentObject
+from docx.oxml.ns import qn
 from docx.table import Table
 from docx.text.paragraph import Paragraph
 from markdown_it import MarkdownIt
+from PIL import Image as PillowImage
 
-from document_enhancer.models import SourceBlock, SourceDocument, SourceFormat
+from document_enhancer.models import SourceAsset, SourceBlock, SourceDocument, SourceFormat
 
 
 class SourceIngestionError(ValueError):
@@ -90,10 +94,124 @@ def _ingest_docx(path: Path) -> SourceDocument:
         raise SourceIngestionError(f"could not read DOCX source {path}: {exc}") from exc
 
     title, raw_blocks = _docx_sections(document, path.stem)
+    if len(raw_blocks) == 1 and raw_blocks[0].heading in {"Preamble", title}:
+        parts = [part.strip() for part in re.split(r"\n\s*\n", raw_blocks[0].content)]
+        meaningful_parts = [part for part in parts if _is_meaningful(part)]
+        if len(meaningful_parts) > 1:
+            raw_blocks = [
+                _RawBlock(heading=f"Source content {index}", content=content)
+                for index, content in enumerate(meaningful_parts, start=1)
+            ]
     if not raw_blocks:
         raise SourceIngestionError(f"source document has no meaningful text: {path}")
     full_text = "\n\n".join(f"{block.heading}\n{block.content}" for block in raw_blocks)
-    return _source_document(path, SourceFormat.DOCX, title, raw_blocks, full_text)
+    source = _source_document(path, SourceFormat.DOCX, title, raw_blocks, full_text)
+    assets = _extract_docx_assets(document, source.blocks)
+    return SourceDocument(
+        title=source.title,
+        source_path=source.source_path,
+        source_format=source.source_format,
+        blocks=source.blocks,
+        assets=assets,
+        full_text=source.full_text,
+    )
+
+
+def _extract_docx_assets(document: DocumentObject, blocks: list[SourceBlock]) -> list[SourceAsset]:
+    assets: list[SourceAsset] = []
+    current_heading = "Preamble"
+    last_text = ""
+    for item in _iter_body_paragraphs(document):
+        text = item.text.strip()
+        style_name = (item.style.name if item.style else "").strip()
+        if style_name.casefold() == "title" or _heading_level(style_name) is not None:
+            current_heading = text or current_heading
+        blips = item._p.xpath(".//a:blip")
+        descriptions = [
+            str(node.get("descr") or node.get("title") or "").strip()
+            for node in item._p.xpath(".//wp:docPr")
+        ]
+        for occurrence, blip in enumerate(blips):
+            relation_id = blip.get(qn("r:embed"))
+            if not relation_id:
+                continue
+            part = document.part.related_parts.get(relation_id)
+            media_type = getattr(part, "content_type", "")
+            if media_type not in {"image/png", "image/jpeg"}:
+                continue
+            payload = bytes(getattr(part, "blob", b""))
+            if not payload:
+                continue
+            try:
+                with PillowImage.open(BytesIO(payload)) as image:
+                    width, height = image.size
+            except OSError as exc:
+                raise SourceIngestionError(
+                    f"embedded DOCX image {relation_id} is unreadable"
+                ) from exc
+            anchor_text = text or last_text
+            source_block_id = _asset_source_block_id(
+                blocks, heading=current_heading, anchor_text=anchor_text
+            )
+            digest = hashlib.sha256(payload).hexdigest()
+            partname = str(getattr(part, "partname", relation_id))
+            figure_id = f"FIG-{len(assets) + 1:03d}"
+            alt_text = descriptions[occurrence] if occurrence < len(descriptions) else ""
+            assets.append(
+                SourceAsset(
+                    id=figure_id,
+                    source_block_id=source_block_id,
+                    order=len(assets) + 1,
+                    original_name=Path(partname).name or f"{figure_id}.png",
+                    media_type=media_type,
+                    sha256=digest,
+                    size_bytes=len(payload),
+                    width_pixels=width,
+                    height_pixels=height,
+                    anchor_text=anchor_text[:500],
+                    alt_text=alt_text,
+                    payload=payload,
+                )
+            )
+        if text and not blips:
+            last_text = text
+    return assets
+
+
+def _iter_body_paragraphs(document: DocumentObject):
+    for item in document.iter_inner_content():
+        if isinstance(item, Paragraph):
+            yield item
+        elif isinstance(item, Table):
+            yield from _iter_table_paragraphs(item)
+
+
+def _iter_table_paragraphs(table: Table):
+    seen_cells: set[int] = set()
+    for row in table.rows:
+        for cell in row.cells:
+            cell_key = id(cell._tc)
+            if cell_key in seen_cells:
+                continue
+            seen_cells.add(cell_key)
+            for item in cell.iter_inner_content():
+                if isinstance(item, Paragraph):
+                    yield item
+                elif isinstance(item, Table):
+                    yield from _iter_table_paragraphs(item)
+
+
+def _asset_source_block_id(blocks: list[SourceBlock], *, heading: str, anchor_text: str) -> str:
+    normalized_anchor = " ".join(anchor_text.split())
+    if normalized_anchor:
+        for block in blocks:
+            if normalized_anchor in " ".join(block.content.split()):
+                return block.id
+    normalized_heading = heading.strip().casefold()
+    for block in blocks:
+        if block.heading.strip().casefold() == normalized_heading:
+            return block.id
+    return blocks[0].id
 
 
 def _docx_sections(document: DocumentObject, fallback_title: str) -> tuple[str, list[_RawBlock]]:

@@ -82,6 +82,10 @@ def test_stage1_adds_source_grounded_process_flow_and_editable_questions(
     assert "![Source-derived process flow](process_flow.png)" in draft
     assert "```mermaid" in draft and "flowchart TD" in draft
     assert len(questions["questions"]) == 2
+    assert questions["schema_version"] == "questions.v2"
+    assert questions["structure_mode"] == "auto"
+    assert questions["structure_recovered"] is False
+    assert questions["recovered_structure"] is None
     assert all(question["answer"] == "" for question in questions["questions"])
     with Image.open(output / "process_flow.png") as image:
         assert image.width >= 900 and image.height >= 800
@@ -162,3 +166,31 @@ def test_stage2_rejects_incomplete_answers(tmp_path: Path) -> None:
 
     assert result.exit_code == 2
     assert "Stage 2 answer is empty" in result.output
+
+
+def test_stage2_rejects_structure_mode_different_from_stage1(tmp_path: Path) -> None:
+    stage1 = _stage1(tmp_path)
+    answers = stage1 / "questions.json"
+    _complete_answers(answers)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "stage2",
+            "--source",
+            str(SOURCE),
+            "--template",
+            str(TEMPLATE),
+            "--answers",
+            str(answers),
+            "--output-dir",
+            str(tmp_path / "stage2"),
+            "--provider",
+            "fake",
+            "--structure-mode",
+            "never",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "structure mode must match Stage 1" in result.output

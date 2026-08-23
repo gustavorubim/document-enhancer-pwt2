@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from enum import StrEnum
 from pathlib import Path
 from typing import Literal
@@ -42,6 +43,18 @@ class GapKind(StrEnum):
     UNCLEAR = "unclear"
 
 
+class StructureMode(StrEnum):
+    AUTO = "auto"
+    ALWAYS = "always"
+    NEVER = "never"
+
+
+class BatchStatus(StrEnum):
+    COMPLETED = "completed"
+    COMPLETED_WITH_QUESTIONS = "completed_with_questions"
+    FAILED = "failed"
+
+
 class ProcedureComponent(StrEnum):
     OBJECTIVE = "objective"
     INTENDED_USER = "intended_user"
@@ -68,6 +81,26 @@ class ProcessNodeKind(StrEnum):
     END = "end"
 
 
+class StructureAssessment(StrictModel):
+    score: float = Field(ge=0, le=1)
+    needs_recovery: bool
+    reasons: list[str]
+    block_count: int = Field(ge=1)
+    meaningful_heading_count: int = Field(ge=0)
+    generic_heading_count: int = Field(ge=0)
+    longest_block_characters: int = Field(ge=0)
+
+
+class RecoveredSection(StrictModel):
+    heading: str = Field(min_length=1, max_length=120)
+    level: int = Field(default=2, ge=1, le=6)
+    source_block_ids: list[str] = Field(min_length=1)
+
+
+class RecoveredStructure(StrictModel):
+    sections: list[RecoveredSection] = Field(min_length=1)
+
+
 class SourceBlock(StrictModel):
     id: str = Field(pattern=r"^SRC-\d{3}$")
     heading: str = Field(min_length=1)
@@ -75,12 +108,30 @@ class SourceBlock(StrictModel):
     order: int = Field(ge=1)
 
 
+class SourceAsset(StrictModel):
+    id: str = Field(pattern=r"^FIG-\d{3}$")
+    source_block_id: str = Field(pattern=r"^SRC-\d{3}$")
+    order: int = Field(ge=1)
+    original_name: str = Field(min_length=1)
+    media_type: Literal["image/png", "image/jpeg"]
+    sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    size_bytes: int = Field(gt=0)
+    width_pixels: int = Field(gt=0)
+    height_pixels: int = Field(gt=0)
+    anchor_text: str = ""
+    alt_text: str = ""
+    payload: bytes = Field(repr=False, exclude=True)
+
+
 class SourceDocument(StrictModel):
     title: str = Field(min_length=1)
     source_path: Path
     source_format: SourceFormat
     blocks: list[SourceBlock] = Field(min_length=1)
+    assets: list[SourceAsset] = Field(default_factory=list)
     full_text: str = Field(min_length=1)
+    structure_assessment: StructureAssessment | None = None
+    structure_recovered: bool = False
 
     @model_validator(mode="after")
     def validate_blocks(self) -> SourceDocument:
@@ -90,6 +141,17 @@ class SourceDocument(StrictModel):
             raise ValueError("source block IDs must be unique")
         if orders != list(range(1, len(self.blocks) + 1)):
             raise ValueError("source block order must be contiguous and start at 1")
+        asset_ids = [asset.id for asset in self.assets]
+        if len(asset_ids) != len(set(asset_ids)):
+            raise ValueError("source asset IDs must be unique")
+        if [asset.order for asset in self.assets] != list(range(1, len(self.assets) + 1)):
+            raise ValueError("source asset order must be contiguous and start at 1")
+        known_source_ids = set(ids)
+        for asset in self.assets:
+            if asset.source_block_id not in known_source_ids:
+                raise ValueError(f"source asset references unknown block: {asset.source_block_id}")
+            if hashlib.sha256(asset.payload).hexdigest() != asset.sha256:
+                raise ValueError(f"source asset digest does not match payload: {asset.id}")
         return self
 
 
@@ -286,10 +348,22 @@ class QuestionResponse(StrictModel):
 
 
 class Questionnaire(StrictModel):
-    schema_version: Literal["questions.v1"] = "questions.v1"
+    schema_version: Literal["questions.v2"] = "questions.v2"
     source_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     template_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    structure_mode: StructureMode
+    structure_recovered: bool
+    structure_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    recovered_structure: RecoveredStructure | None = None
     questions: list[QuestionResponse]
+
+    @model_validator(mode="after")
+    def validate_recovered_structure(self) -> Questionnaire:
+        if self.structure_recovered != (self.recovered_structure is not None):
+            raise ValueError(
+                "structure_recovered must agree with the persisted recovered structure"
+            )
+        return self
 
 
 class ResolutionRecord(StrictModel):

@@ -1,4 +1,4 @@
-"""One linear, application-owned enhancement pipeline and its provider seams."""
+"""Application-owned document operations executed by the bounded LangGraph workflow."""
 
 from __future__ import annotations
 
@@ -18,7 +18,6 @@ from document_enhancer.diagram import (
     render_process_graph_png,
     validate_process_graph_sources,
 )
-from document_enhancer.ingest import ingest_source
 from document_enhancer.models import (
     AnalysisMapping,
     AnalysisQuestion,
@@ -38,19 +37,23 @@ from document_enhancer.models import (
     QualityReview,
     Questionnaire,
     QuestionResponse,
+    RecoveredSection,
+    RecoveredStructure,
     RequirementAssessment,
     ResolutionRecord,
+    SourceAsset,
     SourceBlock,
     SourceDocument,
     SourceSectionDisposition,
     Stage2Resolution,
+    StructureAssessment,
+    StructureMode,
     TargetSectionAssessment,
     TemplateRequirement,
     TemplateSection,
 )
 from document_enhancer.prompts import PromptStore
 from document_enhancer.render import render_markdown_pair, render_markdown_to_docx
-from document_enhancer.template import parse_template
 
 
 class PipelineContractError(ValueError):
@@ -65,6 +68,10 @@ class RunArtifacts:
     analysis_docx: Path
     mapping_json: Path
     quality_review: QualityReview
+    structure_assessment: StructureAssessment
+    structure_recovered: bool
+    workflow_trace: tuple[str, ...]
+    source_asset_paths: tuple[Path, ...] = ()
     process_flow_mermaid: Path | None = None
     process_flow_image: Path | None = None
     questions_json: Path | None = None
@@ -77,9 +84,14 @@ class Stage2Artifacts:
     resolution_json: Path
     process_flow_mermaid: Path
     process_flow_image: Path
+    source_asset_paths: tuple[Path, ...] = ()
 
 
 class AnalysisProvider(Protocol):
+    def recover_structure(
+        self, source: SourceDocument, assessment: StructureAssessment
+    ) -> RecoveredStructure: ...
+
     def analyze(self, source: SourceDocument, template: ParsedTemplate) -> AnalysisMapping: ...
 
     def draft_section(
@@ -125,6 +137,15 @@ class GeminiProvider:
     @staticmethod
     def credentials_available() -> bool:
         return bool(os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY"))
+
+    def recover_structure(
+        self, source: SourceDocument, assessment: StructureAssessment
+    ) -> RecoveredStructure:
+        payload = {
+            "source": source.model_dump(mode="json"),
+            "structure_assessment": assessment.model_dump(mode="json"),
+        }
+        return self._invoke("structure", RecoveredStructure, payload)
 
     def analyze(self, source: SourceDocument, template: ParsedTemplate) -> AnalysisMapping:
         payload = {
@@ -255,6 +276,12 @@ class _GapRegistry:
 
 class DeterministicProvider:
     """Transparent offline evaluator used by tests and the bundled example."""
+
+    def recover_structure(
+        self, source: SourceDocument, assessment: StructureAssessment
+    ) -> RecoveredStructure:
+        del assessment
+        return _deterministic_recovered_structure(source)
 
     def analyze(self, source: SourceDocument, template: ParsedTemplate) -> AnalysisMapping:
         source_ids = [block.id for block in source.blocks]
@@ -780,6 +807,44 @@ class DeterministicProvider:
         return assessments
 
 
+def _deterministic_recovered_structure(source: SourceDocument) -> RecoveredStructure:
+    sections: list[RecoveredSection] = []
+    for block in source.blocks:
+        text = f"{block.heading} {block.content}"
+        signals = _signals(text)
+        if re.search(r"(?m)^\s*\d+[.)]\s+", block.content):
+            heading = "Procedure steps"
+        elif signals & {
+            ProcedureComponent.EXCEPTIONS,
+            ProcedureComponent.RECOVERY,
+            ProcedureComponent.ESCALATION,
+        }:
+            heading = "Exceptions, recovery, and escalation"
+        elif signals & {ProcedureComponent.DECISION_POINTS, ProcedureComponent.VALIDATION}:
+            heading = "Decision points and validation"
+        elif ProcedureComponent.EVIDENCE in signals:
+            heading = "Outputs and evidence"
+        elif signals & {ProcedureComponent.PREREQUISITES, ProcedureComponent.TOOLS_AND_ACCESS}:
+            heading = "Prerequisites, tools, and access"
+        elif ProcedureComponent.ROLES in signals:
+            heading = "Roles and responsibilities"
+        elif ProcedureComponent.TRIGGERS in signals:
+            heading = "Triggers and timing"
+        elif signals & {ProcedureComponent.INTENDED_USER, ProcedureComponent.SCOPE}:
+            heading = "Audience and scope"
+        elif signals & {ProcedureComponent.OBJECTIVE, ProcedureComponent.EXPECTED_RESULTS}:
+            heading = "Purpose and outcome"
+        else:
+            heading = "Procedure details"
+        if sections and sections[-1].heading == heading:
+            sections[-1] = sections[-1].model_copy(
+                update={"source_block_ids": [*sections[-1].source_block_ids, block.id]}
+            )
+        else:
+            sections.append(RecoveredSection(heading=heading, source_block_ids=[block.id]))
+    return RecoveredStructure(sections=sections)
+
+
 def _deterministic_process_graph(source: SourceDocument, mapping: AnalysisMapping) -> ProcessGraph:
     step_records: list[tuple[SourceBlock, str]] = []
     for block in source.blocks:
@@ -1258,6 +1323,112 @@ def analysis_to_markdown(mapping: AnalysisMapping) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def _persist_source_assets(source: SourceDocument, target_dir: Path) -> tuple[Path, ...]:
+    if not source.assets:
+        return ()
+    asset_dir = target_dir / "assets"
+    asset_dir.mkdir(parents=True, exist_ok=True)
+    paths = []
+    for asset in source.assets:
+        suffix = ".png" if asset.media_type == "image/png" else ".jpg"
+        path = asset_dir / f"{asset.id}{suffix}"
+        if hashlib.sha256(asset.payload).hexdigest() != asset.sha256:
+            raise PipelineContractError(f"source screenshot digest mismatch: {asset.id}")
+        path.write_bytes(asset.payload)
+        paths.append(path)
+    return tuple(paths)
+
+
+def _place_source_assets(
+    markdown: str,
+    source: SourceDocument,
+    mapping: AnalysisMapping,
+    template: ParsedTemplate,
+) -> str:
+    if not source.assets:
+        return markdown
+    disposition_by_source = {
+        item.source_block_id: item for item in mapping.source_section_dispositions
+    }
+    target_by_id = {section.id: section for section in template.sections}
+    result = markdown
+    for asset in reversed(source.assets):
+        figure_markdown = _source_asset_markdown(asset)
+        disposition = disposition_by_source.get(asset.source_block_id)
+        target_id = (
+            disposition.target_section_ids[0]
+            if disposition and disposition.target_section_ids
+            else None
+        )
+        target = target_by_id.get(target_id or "")
+        if asset.anchor_text and target:
+            placed = _insert_after_anchor_in_section(
+                result, target, asset.anchor_text, figure_markdown
+            )
+            if placed is not None:
+                result = placed
+                continue
+        if asset.anchor_text and result.count(asset.anchor_text) == 1:
+            result = result.replace(
+                asset.anchor_text,
+                asset.anchor_text + "\n\n" + figure_markdown,
+                1,
+            )
+            continue
+        if target:
+            result = _append_to_markdown_section(result, target, figure_markdown)
+        else:
+            result = result.rstrip() + "\n\n## Source screenshots\n\n" + figure_markdown + "\n"
+    return result
+
+
+def _source_asset_markdown(asset: SourceAsset) -> str:
+    suffix = ".png" if asset.media_type == "image/png" else ".jpg"
+    alt = _markdown_inline_text(asset.alt_text or f"Original source screenshot {asset.id}")
+    anchor = _markdown_inline_text(" ".join(asset.anchor_text.split())[:160])
+    context = f' near "{anchor}"' if anchor else ""
+    return (
+        f"![{alt}](assets/{asset.id}{suffix})\n\n"
+        f"*{asset.id} - Original source screenshot retained from "
+        f"{asset.source_block_id}{context}.*"
+    )
+
+
+def _markdown_inline_text(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("[", "\\[").replace("]", "\\]")
+
+
+def _append_to_markdown_section(markdown: str, target: TemplateSection, content: str) -> str:
+    heading = f"{'#' * target.level} {target.heading}"
+    start = markdown.find(heading)
+    if start < 0:
+        return markdown.rstrip() + "\n\n" + content + "\n"
+    body_start = start + len(heading)
+    next_heading = re.search(rf"(?m)^#{{1,{target.level}}}\s+", markdown[body_start:])
+    end = body_start + next_heading.start() if next_heading else len(markdown)
+    return markdown[:end].rstrip() + "\n\n" + content + "\n\n" + markdown[end:].lstrip()
+
+
+def _insert_after_anchor_in_section(
+    markdown: str,
+    target: TemplateSection,
+    anchor: str,
+    content: str,
+) -> str | None:
+    heading = f"{'#' * target.level} {target.heading}"
+    start = markdown.find(heading)
+    if start < 0:
+        return None
+    body_start = start + len(heading)
+    next_heading = re.search(rf"(?m)^#{{1,{target.level}}}\s+", markdown[body_start:])
+    end = body_start + next_heading.start() if next_heading else len(markdown)
+    anchor_start = markdown.find(anchor, body_start, end)
+    if anchor_start < 0:
+        return None
+    anchor_end = anchor_start + len(anchor)
+    return markdown[:anchor_end] + "\n\n" + content + markdown[anchor_end:]
+
+
 def run_enhancement(
     *,
     source_path: Path,
@@ -1265,20 +1436,30 @@ def run_enhancement(
     output_dir: Path,
     provider: AnalysisProvider,
     include_process_flow: bool = False,
+    structure_mode: StructureMode = StructureMode.AUTO,
 ) -> RunArtifacts:
     """Run the complete pipeline; the baseline emits exactly five product artifacts."""
 
-    source = ingest_source(source_path)
-    template = parse_template(template_path)
-    mapping = provider.analyze(source, template)
-    validate_mapping(mapping, source, template)
-    sections = draft_sections(provider, source, template, mapping)
-    sections, quality_review = review_sections(provider, source, template, mapping, sections)
+    from document_enhancer.workflow import invoke_authoring_graph
+
+    state = invoke_authoring_graph(
+        source_path=source_path,
+        template_path=template_path,
+        provider=provider,
+        structure_mode=structure_mode,
+    )
+    source = state["source"]
+    template = state["template"]
+    mapping = state["mapping"]
+    sections = state["sections"]
+    quality_review = state["quality_review"]
     draft_markdown = assemble_draft_markdown(template, sections)
     analysis_markdown = analysis_to_markdown(mapping)
 
     target_dir = output_dir.expanduser().resolve()
     target_dir.mkdir(parents=True, exist_ok=True)
+    source_asset_paths = _persist_source_assets(source, target_dir)
+    draft_markdown = _place_source_assets(draft_markdown, source, mapping, template)
     flow_mermaid_path: Path | None = None
     flow_image_path: Path | None = None
     questions_path: Path | None = None
@@ -1292,7 +1473,14 @@ def run_enhancement(
         flow_mermaid_path.write_text(mermaid, encoding="utf-8")
         render_process_graph_png(graph, flow_image_path)
         questions_path.write_text(
-            _questionnaire(mapping, source_path, template_path).model_dump_json(indent=2) + "\n",
+            _questionnaire(
+                mapping,
+                source_path,
+                template_path,
+                structure_mode=structure_mode,
+                recovered_structure=state.get("recovered_structure"),
+            ).model_dump_json(indent=2)
+            + "\n",
             encoding="utf-8",
         )
         draft_markdown = draft_markdown.rstrip() + _process_flow_appendix(mermaid)
@@ -1302,7 +1490,22 @@ def run_enhancement(
     mapping_path = target_dir / "mapping.json"
     draft_md_path.write_text(draft_markdown, encoding="utf-8")
     analysis_md_path.write_text(analysis_markdown, encoding="utf-8")
-    mapping_path.write_text(mapping.model_dump_json(indent=2) + "\n", encoding="utf-8")
+    mapping_payload = mapping.model_dump(mode="json")
+    mapping_payload["source_structure"] = {
+        "assessment": state["structure_assessment"].model_dump(mode="json"),
+        "recovered": state["recovery_used"],
+        "recovered_structure": (
+            state["recovered_structure"].model_dump(mode="json")
+            if state.get("recovered_structure") is not None
+            else None
+        ),
+        "workflow_trace": state["trace"],
+    }
+    mapping_payload["source_assets"] = [asset.model_dump(mode="json") for asset in source.assets]
+    mapping_path.write_text(
+        json.dumps(mapping_payload, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
     rendered = render_markdown_pair(draft_md_path, analysis_md_path, target_dir)
     return RunArtifacts(
         draft_markdown=draft_md_path,
@@ -1311,6 +1514,10 @@ def run_enhancement(
         analysis_docx=rendered.analysis_docx,
         mapping_json=mapping_path,
         quality_review=quality_review,
+        structure_assessment=state["structure_assessment"],
+        structure_recovered=state["recovery_used"],
+        workflow_trace=tuple(state["trace"]),
+        source_asset_paths=source_asset_paths,
         process_flow_mermaid=flow_mermaid_path,
         process_flow_image=flow_image_path,
         questions_json=questions_path,
@@ -1337,11 +1544,20 @@ def _file_sha256(path: Path) -> str:
 
 
 def _questionnaire(
-    mapping: AnalysisMapping, source_path: Path, template_path: Path
+    mapping: AnalysisMapping,
+    source_path: Path,
+    template_path: Path,
+    *,
+    structure_mode: StructureMode,
+    recovered_structure: RecoveredStructure | None,
 ) -> Questionnaire:
     return Questionnaire(
         source_sha256=_file_sha256(source_path.resolve()),
         template_sha256=_file_sha256(template_path.resolve()),
+        structure_mode=structure_mode,
+        structure_recovered=recovered_structure is not None,
+        structure_sha256=_structure_sha256(recovered_structure),
+        recovered_structure=recovered_structure,
         questions=[
             QuestionResponse(
                 id=question.id,
@@ -1354,11 +1570,15 @@ def _questionnaire(
     )
 
 
-def _load_answered_questionnaire(
+def _structure_sha256(recovered_structure: RecoveredStructure | None) -> str:
+    payload = recovered_structure.model_dump_json() if recovered_structure is not None else "null"
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _read_answered_questionnaire(
     answers_path: Path,
     source_path: Path,
     template_path: Path,
-    mapping: AnalysisMapping,
 ) -> Questionnaire:
     try:
         questionnaire = Questionnaire.model_validate_json(answers_path.read_text(encoding="utf-8"))
@@ -1368,6 +1588,17 @@ def _load_answered_questionnaire(
         raise PipelineContractError("answers file does not match the current source document")
     if questionnaire.template_sha256 != _file_sha256(template_path.resolve()):
         raise PipelineContractError("answers file does not match the current template")
+    if questionnaire.structure_sha256 != _structure_sha256(questionnaire.recovered_structure):
+        raise PipelineContractError("answers file changed the protected structure contract")
+    for response in questionnaire.questions:
+        if not response.answer.strip():
+            raise PipelineContractError(f"Stage 2 answer is empty for {response.id}")
+    return questionnaire
+
+
+def _validate_questionnaire_contract(
+    questionnaire: Questionnaire, mapping: AnalysisMapping
+) -> None:
     expected = {question.id: question for question in mapping.questions}
     received = {question.id: question for question in questionnaire.questions}
     if set(received) != set(expected):
@@ -1381,8 +1612,6 @@ def _load_answered_questionnaire(
             raise PipelineContractError(
                 f"answers file changed the protected question contract for {question_id}"
             )
-        if not response.answer.strip():
-            raise PipelineContractError(f"Stage 2 answer is empty for {question_id}")
     covered_gaps = {gap_id for response in questionnaire.questions for gap_id in response.gap_ids}
     mapping_gaps = {gap.id for gap in mapping.gaps}
     if covered_gaps != mapping_gaps:
@@ -1390,7 +1619,6 @@ def _load_answered_questionnaire(
             f"questions must cover every current gap; expected {sorted(mapping_gaps)}, "
             f"received {sorted(covered_gaps)}"
         )
-    return questionnaire
 
 
 def _augment_source_with_answers(
@@ -1726,6 +1954,7 @@ def run_stage2(
     answers_path: Path,
     output_dir: Path,
     provider: AnalysisProvider,
+    structure_mode: StructureMode = StructureMode.AUTO,
 ) -> Stage2Artifacts:
     """Create a final procedure from a complete, matching Stage 1 answer file."""
 
@@ -1734,13 +1963,26 @@ def run_stage2(
         raise PipelineContractError(
             "Stage 2 output directory must differ from the Stage 1 answers directory"
         )
-    source = ingest_source(source_path)
-    template = parse_template(template_path)
-    original_mapping = provider.analyze(source, template)
-    validate_mapping(original_mapping, source, template)
-    questionnaire = _load_answered_questionnaire(
-        answers_path, source_path, template_path, original_mapping
+    questionnaire = _read_answered_questionnaire(answers_path, source_path, template_path)
+    if questionnaire.structure_mode is not structure_mode:
+        raise PipelineContractError(
+            "Stage 2 structure mode must match Stage 1; "
+            f"expected {questionnaire.structure_mode.value}, received {structure_mode.value}"
+        )
+
+    from document_enhancer.workflow import invoke_analysis_graph
+
+    state = invoke_analysis_graph(
+        source_path=source_path,
+        template_path=template_path,
+        provider=provider,
+        structure_mode=structure_mode,
+        persisted_recovered_structure=questionnaire.recovered_structure,
     )
+    source = state["source"]
+    template = state["template"]
+    original_mapping = state["mapping"]
+    _validate_questionnaire_contract(questionnaire, original_mapping)
     augmented_source, answer_blocks = _augment_source_with_answers(source, questionnaire)
     resolved_mapping, resolution = _resolve_mapping_with_answers(
         original_mapping, questionnaire, answer_blocks
@@ -1759,9 +2001,13 @@ def run_stage2(
     resolution_path = target_dir / "resolution.json"
     flow_mermaid_path = target_dir / "process_flow.mmd"
     flow_image_path = target_dir / "process_flow.png"
+    source_asset_paths = _persist_source_assets(augmented_source, target_dir)
     flow_mermaid_path.write_text(mermaid, encoding="utf-8")
     render_process_graph_png(graph, flow_image_path)
-    final_markdown = assemble_draft_markdown(template, sections).rstrip()
+    final_markdown = assemble_draft_markdown(template, sections)
+    final_markdown = _place_source_assets(
+        final_markdown, augmented_source, resolved_mapping, template
+    ).rstrip()
     final_md_path.write_text(final_markdown + _process_flow_appendix(mermaid), encoding="utf-8")
     resolution_path.write_text(resolution.model_dump_json(indent=2) + "\n", encoding="utf-8")
     render_markdown_to_docx(final_md_path, final_docx_path)
@@ -1771,6 +2017,7 @@ def run_stage2(
         resolution_json=resolution_path,
         process_flow_mermaid=flow_mermaid_path,
         process_flow_image=flow_image_path,
+        source_asset_paths=source_asset_paths,
     )
 
 

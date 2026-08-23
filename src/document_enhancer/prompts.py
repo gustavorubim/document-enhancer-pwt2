@@ -5,7 +5,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-PROMPT_NAMES = ("shared", "analyze", "draft_section", "review", "diagram", "finalize")
+PROMPT_NAMES = (
+    "shared",
+    "structure",
+    "analyze",
+    "draft_section",
+    "review",
+    "diagram",
+    "finalize",
+)
 
 
 @dataclass(frozen=True)
