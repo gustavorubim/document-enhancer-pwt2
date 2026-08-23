@@ -378,3 +378,30 @@ class Stage2Resolution(StrictModel):
     source_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     template_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     resolutions: list[ResolutionRecord]
+
+
+class BatchDocumentResult(StrictModel):
+    source_name: str = Field(min_length=1)
+    source_path: Path
+    output_dir: Path
+    status: BatchStatus
+    question_count: int = Field(ge=0)
+    screenshot_count: int = Field(ge=0)
+    structure_score: float | None = Field(default=None, ge=0, le=1)
+    structure_recovered: bool = False
+    duration_seconds: float = Field(ge=0)
+    error: str | None = None
+
+
+class BatchManifest(StrictModel):
+    schema_version: Literal["batch.v1"] = "batch.v1"
+    input_dir: Path
+    template_path: Path
+    template_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    documents: list[BatchDocumentResult]
+    completed_count: int = Field(ge=0)
+    questions_count: int = Field(ge=0)
+    failed_count: int = Field(ge=0)
+    screenshot_count: int = Field(ge=0)
+    recovered_count: int = Field(ge=0)
+    total_duration_seconds: float = Field(ge=0)

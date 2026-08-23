@@ -5,6 +5,7 @@ from typing import Annotated
 
 import typer
 
+from document_enhancer.batch import run_batch
 from document_enhancer.models import StructureMode
 from document_enhancer.pipeline import (
     DeterministicProvider,
@@ -185,6 +186,51 @@ def stage2_command(
         artifacts.process_flow_image,
     ):
         typer.echo(path)
+
+
+@app.command("batch")
+def batch_command(
+    input_dir: Annotated[
+        Path, typer.Option("--input-dir", help="Directory of DOCX or Markdown sources.")
+    ],
+    template: Annotated[Path, typer.Option("--template", help="Required Markdown template.")],
+    output_dir: Annotated[Path, typer.Option("--output-dir", help="Batch output directory.")],
+    provider: Annotated[
+        str, typer.Option("--provider", help="auto, gemini, or fake (deterministic evaluation).")
+    ] = "auto",
+    model: Annotated[str, typer.Option("--model", help="Gemini model name.")] = (
+        "gemini-2.5-flash"
+    ),
+    structure_mode: Annotated[
+        str,
+        typer.Option(
+            "--structure-mode",
+            help="auto, always, or never; auto recovers only weak document layouts.",
+        ),
+    ] = "auto",
+) -> None:
+    """Transform every supported source independently and write a batch manifest."""
+
+    try:
+        selected, model_provider = _select_provider(provider, model)
+        manifest = run_batch(
+            input_dir=input_dir,
+            template_path=template,
+            output_dir=output_dir,
+            provider=model_provider,
+            structure_mode=_structure_mode(structure_mode),
+        )
+    except (OSError, ValueError, PipelineContractError) as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
+    typer.echo(f"Provider: {selected}")
+    typer.echo(output_dir.expanduser().resolve() / "batch_manifest.json")
+    typer.echo(
+        f"Completed: {manifest.completed_count}; with questions: "
+        f"{manifest.questions_count}; failed: {manifest.failed_count}"
+    )
+    if manifest.failed_count:
+        raise typer.Exit(code=3)
 
 
 if __name__ == "__main__":
