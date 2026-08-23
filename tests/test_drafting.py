@@ -93,15 +93,15 @@ def test_expected_facts_contract_is_fully_accounted_for() -> None:
     ]
     missing = [value for value in expected["required_strings"] if value not in markdown]
     assert missing == []
-    assert len(re.findall(r"(?m)^\d+\. ", markdown)) == expected["counts"][
-        "ordered_step_count"
-    ]
-    assert len([gap for gap in mapping.gaps if gap.kind is GapKind.MISSING]) == expected["counts"][
-        "missing_fact_count"
-    ]
-    assert len([gap for gap in mapping.gaps if gap.kind is GapKind.CONFLICT]) == expected["counts"][
-        "conflict_count"
-    ]
+    assert len(re.findall(r"(?m)^\d+\. ", markdown)) == expected["counts"]["ordered_step_count"]
+    assert (
+        len([gap for gap in mapping.gaps if gap.kind is GapKind.MISSING])
+        == expected["counts"]["missing_fact_count"]
+    )
+    assert (
+        len([gap for gap in mapping.gaps if gap.kind is GapKind.CONFLICT])
+        == expected["counts"]["conflict_count"]
+    )
     assert len(mapping.questions) == expected["counts"]["expected_question_count"]
     assert len({question.text.casefold() for question in mapping.questions}) == len(
         mapping.questions

@@ -75,8 +75,6 @@ def test_repository_template_is_valid_and_realistic() -> None:
         ("# Purpose\n<!-- REQUIREMENTS\n- State it.", "malformed or unclosed"),
     ],
 )
-def test_malformed_templates_have_clear_errors(
-    tmp_path: Path, content: str, message: str
-) -> None:
+def test_malformed_templates_have_clear_errors(tmp_path: Path, content: str, message: str) -> None:
     with pytest.raises(TemplateParseError, match=message):
         parse_template(_write(tmp_path, content))

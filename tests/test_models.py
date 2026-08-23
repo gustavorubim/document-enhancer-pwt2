@@ -49,9 +49,7 @@ def test_template_rejects_duplicate_headings_case_insensitively() -> None:
                     id="SEC-002",
                     heading=" purpose ",
                     level=2,
-                    requirements=[
-                        TemplateRequirement(id="REQ-002-01", text="Repeat the purpose.")
-                    ],
+                    requirements=[TemplateRequirement(id="REQ-002-01", text="Repeat the purpose.")],
                 ),
             ],
         )
