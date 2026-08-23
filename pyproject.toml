@@ -31,8 +31,10 @@ docenhance = "document_enhancer.cli:app"
 packages = ["src/document_enhancer"]
 
 [tool.pytest.ini_options]
-addopts = "-q"
+addopts = "-q -m 'not stress'"
 testpaths = ["tests"]
+pythonpath = [".", "src"]
+markers = ["stress: full 20-document DOCX campaign"]
 
 [tool.uv]
 # macOS can mark files inside a hidden .venv as UF_HIDDEN; Python 3.12 then skips a stale
