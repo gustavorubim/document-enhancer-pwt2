@@ -11,7 +11,9 @@ This MVP handles **desktop procedures only**.
 - Source input: one `.docx`, `.md`, or `.markdown` file.
 - Template input: one required Markdown template.
 - Output: `draft.md`, `draft.docx`, `analysis.md`, `analysis.docx`, and `mapping.json`.
-- Model access: Gemini through LangChain and `langchain-google-genai` only.
+- Model access: one Gemini setup through `langchain-google-genai`.
+- Workflow orchestration: one bounded LangGraph `StateGraph`; the direct classic `langchain`
+  package is not a project dependency.
 
 The draft is source-supported. Template requirements say what a section should contain, but they
 are never treated as evidence that a business fact is true. Missing, conflicting, and unclear
@@ -55,6 +57,11 @@ Provider selection is explicit:
 The fake provider proves contracts, accounting, rendering, and fact retention. It is not a
 replacement for live model-quality verification on real documents.
 
+For a DOCX source, inline PNG/JPEG figures in the document body or table cells are extracted as
+ordered `FIG-###` assets, written under the output `assets/` directory, checksum-tracked in
+`mapping.json`, and placed back into the draft near their source context. Markdown sources do not
+carry embedded DOCX media.
+
 ## Optional two-stage workflow
 
 Use Stage 1 when the document owner should answer gaps before a final rewrite. It preserves the
@@ -74,8 +81,8 @@ Additional Stage 1 files:
 - `questions.json` — protected question IDs/text/gap links plus blank `answer` fields.
 
 The Stage 1 draft contains both the rendered process-flow image and the Mermaid code. Fill only
-each `answer` value in `questions.json`; do not change the source/template digests, IDs, question
-text, or gap links.
+each `answer` value in `questions.json`; do not change the source/template digests, structure
+contract, IDs, question text, or gap links.
 
 Run Stage 2 into a separate directory:
 
@@ -87,8 +94,10 @@ uv run docenhance stage2 \
   --output-dir runs/stage2
 ```
 
-Stage 2 fails closed if an answer is blank, a question contract changed, or the source/template no
-longer matches the Stage 1 digests. Each answer becomes a new cited `SRC-###` authoritative input.
+Stage 2 fails closed if an answer is blank, a question or structure contract changed, the selected
+structure mode differs from Stage 1, or the source/template no longer matches the Stage 1 digests.
+When Stage 1 recovered a weak outline, Stage 2 reuses that exact recovered structure instead of
+asking the model to infer it again. Each answer becomes a new cited `SRC-###` authoritative input.
 The final rewrite removes resolved callouts and superseded conflict language while preserving
 unrelated source detail. It creates `final.md`, `final.docx`, `resolution.json`, and updated
 `process_flow.mmd`/`process_flow.png` without modifying the Stage 1 directory.
@@ -139,24 +148,70 @@ visible callouts:
 [UNCLEAR: The source mentions validation but does not explain how it is performed.]
 ```
 
-## Linear pipeline
+## LangGraph workflow
 
-There is no agent graph or workflow engine. Application code owns one bounded sequence:
+The authoring path is a compact, fixed `StateGraph` with one conditional branch:
 
-1. Read and normalize the complete DOCX or Markdown source into ordered `SRC-###` blocks.
-2. Parse every ordered template section and requirement.
-3. Analyze the complete source and create `AnalysisMapping` with section coverage, requirement
-   coverage, source dispositions, component assessments, gaps, questions, and source-block IDs.
-4. Draft one detailed `DraftSection` per target section.
-5. Review the complete assembled draft for omissions, grounding, compression, duplication, and
-   readability; apply only typed corrected sections.
-6. Validate source, target, gap, and factual-anchor references.
-7. Render the same Markdown content to the matching DOCX files and write `mapping.json`.
+```text
+START -> load_inputs -> analyze -> draft -> review -> END
+                    \-> recover_structure -/
+```
 
-Gemini operations use one `ChatGoogleGenerativeAI` setup and native Pydantic structured output via
-`method="json_schema"`. All substantive model instructions, including process-graph extraction and
-the answer-driven final rewrite, live in [`prompts/`](prompts/); Python only selects the operation,
-serializes application data, and validates the returned schema.
+`load_inputs` scores the parsed outline. In `auto` mode, only a weak layout is sent to the bounded
+structure-recovery operation; a sufficient outline goes directly to analysis. `--structure-mode`
+can explicitly select `auto`, `always`, or `never`. Recovery may rename headings, but it must cover
+every existing `SRC-###` block exactly once, in source order, without changing source text. Stage 2
+uses the corresponding shorter load/recover/analyze graph before applying the answer file. The
+assessment, recovered outline when applicable, and executed graph trace are recorded under
+`source_structure` in `mapping.json`.
+
+The remaining nodes analyze the complete source, draft one detailed `DraftSection` per target
+section, review the assembled draft, and validate source, target, gap, and factual-anchor
+references. Gemini operations use one `ChatGoogleGenerativeAI` setup and native Pydantic structured
+output via `method="json_schema"`. All substantive model instructions, including structure
+recovery, process-graph extraction, and the answer-driven final rewrite, live in
+[`prompts/`](prompts/); Python selects the operation, serializes application data, and validates
+the returned schema.
+
+## Batch transformation
+
+Transform every supported source in a directory independently. The deterministic path is useful
+for a repeatable local campaign:
+
+```bash
+uv run docenhance batch \
+  --input-dir docs/incoming \
+  --template templates/desktop_procedure.md \
+  --output-dir runs/batch \
+  --provider fake
+```
+
+Batch accepts `.docx`, `.md`, and `.markdown`. Each source gets its own output directory containing
+the normal artifacts, while `batch_manifest.json` records status, question count, retained
+screenshot count, structure score/recovery, duration, and any error. Processing is sequential and
+failure-isolated, so one bad source does not stop the remaining documents. Use `--provider auto`
+or `--provider gemini` for live model runs.
+
+## Stress campaign
+
+The lean campaign generator creates 20 deterministic DOCX fixtures with declared lengths from 5
+to 30 pages, structured/unstructured/mixed layouts, and a rotating mix of screenshots, tables,
+conflicts, and missing-owner gaps. Page counts are defined by explicit OOXML page breaks, which
+makes the fixture contract deterministic. Run it with:
+
+```bash
+uv run python scripts/stress_campaign.py --work-dir runs/stress-campaign
+```
+
+It writes the generated inputs and `campaign_spec.json`, per-document batch outputs and
+`batch_manifest.json`, plus `stress_report.json`. The runner rejects unexpected stale source files,
+requires every unstructured fixture to take the recovery path, and verifies screenshot bytes in
+both the extracted asset and generated DOCX. The full campaign test is opt-in because normal tests
+exclude the `stress` marker:
+
+```bash
+uv run pytest -m stress tests/test_stress_campaign.py
+```
 
 ## Analysis contents
 
@@ -171,8 +226,10 @@ The analysis gives the document owner:
 ## Verification
 
 ```bash
+uv run ruff format --check .
 uv run ruff check .
 uv run pytest
+uv run pytest -m stress tests/test_stress_campaign.py
 ```
 
 The evaluation fixture is reproducible:
@@ -183,15 +240,17 @@ The evaluation fixture is reproducible:
   threshold conflict.
 
 Tests verify complete section/requirement/source accounting, expected-fact retention, visible gaps,
-conflict-question deduplication, unsupported-fact rejection, prompt placement, the exact five-file
-CLI contract, and Markdown/DOCX semantic equivalence. DOCX rendering uses real numbering and fixed
-table geometry suitable for a compact operator reference. V2 tests additionally verify Mermaid
-sanitization, source citations, PNG/DOCX image embedding, digest-bound questions, immutable Stage 1
-artifacts, complete-answer enforcement, resolved-conflict cleanup, and nine-step retention.
+conflict-question deduplication, unsupported-fact rejection, prompt placement, the CLI contract,
+and Markdown/DOCX semantic equivalence. Additional tests cover LangGraph routing, bounded
+structure recovery, source-image extraction and embedding, batch failure isolation, Mermaid
+sanitization, source citations, digest-bound questions, immutable Stage 1 artifacts,
+complete-answer enforcement, resolved-conflict cleanup, and nine-step retention. DOCX rendering
+uses real numbering and fixed table geometry suitable for a compact operator reference.
 
 ## Explicit non-goals
 
-The application does not include Google Drive or Google Docs APIs, LangGraph, Deep Agents,
-databases, RAG, GraphRAG, embeddings, FAISS, ontologies, sealing, an approval/resume state machine,
-screenshots, PDF input/output, HTML reports, a web UI, deployment, or autonomous agent loops. The
-two-stage commands are independent, digest-bound runs connected by an explicit answer file.
+The application does not include Google Drive or Google Docs APIs, Deep Agents, databases, RAG,
+GraphRAG, embeddings, FAISS, ontologies, sealing, an approval/resume state machine, PDF input/output,
+OCR, HTML reports, a web UI, deployment, or autonomous agent loops. Batch processing is currently
+local and sequential. The two-stage commands are independent, digest-bound runs connected by an
+explicit answer file.
